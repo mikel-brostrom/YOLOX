@@ -19,11 +19,13 @@ class YOLOXHead(nn.Module):
     def __init__(
         self,
         num_classes,
+        input_size,
         width=1.0,
         strides=[8, 16, 32],
         in_channels=[256, 512, 1024],
         act="silu",
         depthwise=False,
+
     ):
         """
         Args:
@@ -34,6 +36,7 @@ class YOLOXHead(nn.Module):
 
         self.num_classes = num_classes
         self.decode_in_inference = True  # for deploy, set to False
+        self.int8 = False  # enables correct INT8 export
 
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
@@ -245,12 +248,16 @@ class YOLOXHead(nn.Module):
         grids = torch.cat(grids, dim=1).type(dtype)
         strides = torch.cat(strides, dim=1).type(dtype)
 
-        outputs = torch.cat([
-            (outputs[..., 0:2] + grids) * strides,
-            torch.exp(outputs[..., 2:4]) * strides,
-            outputs[..., 4:]
-        ], dim=-1)
-        return outputs
+        xy = (outputs[..., 0:2] + grids) * strides
+        wh = torch.exp(outputs[..., 2:4]) * strides
+
+        if self.int8:
+            xy = torch.div(xy, self.input_size[0])
+            wh = torch.div(wh, self.input_size[0])
+            return xy, wh, outputs[..., 4:]
+        else:
+            outputs = torch.cat([xy, wh, outputs[..., 4:]], dim=-1)
+            return outputs
 
     def get_losses(
         self,
